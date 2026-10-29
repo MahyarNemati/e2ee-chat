@@ -1,0 +1,24 @@
+services:
+  relay:
+    build:
+      context: .
+      args:
+        VERSION: compose
+    image: e2ee-chat:local
+    command: ["serve", "-addr", ":8080", "-v"]
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  # A whole conversation in one process, including what the relay was holding
+  # while it happened:  docker compose run --rm demo
+  demo:
+    build:
+      context: .
+    image: e2ee-chat:local
+    profiles: [demo]
+    command: ["demo"]

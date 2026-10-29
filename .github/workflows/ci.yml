@@ -1,0 +1,205 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24', '1.25']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+
+      - run: go vet ./...
+      - run: go build ./...
+
+      - name: Test (race)
+        env:
+          CGO_ENABLED: 1   # the race detector needs cgo
+        run: go test -race -count=1 ./...
+
+  vectors:
+    name: known-answer tests actually ran
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      # A green suite proves nothing if the tests that matter were filtered out,
+      # compiled away or renamed. Each name below has to appear as a PASS.
+      - name: Run the vectors and require each one by name
+        run: |
+          set -o pipefail
+          go test ./internal/primitives/ -v -count=1 \
+            -run 'TestX25519Vectors|TestX25519DHVector|TestChaCha20Poly1305Vector|TestHKDFVectors|TestHMACSHA256Vector|TestMontgomeryEdwardsConversionRoundTrips' \
+            | tee vectors.log
+          for name in \
+            TestX25519Vectors \
+            TestX25519DHVector \
+            TestChaCha20Poly1305Vector \
+            TestHKDFVectors \
+            TestHMACSHA256Vector \
+            TestMontgomeryEdwardsConversionRoundTrips
+          do
+            grep -q -- "--- PASS: $name " vectors.log \
+              || { echo "::error::$name did not run"; exit 1; }
+          done
+          # RFC 5869 has three SHA-256 cases; all three must have run.
+          subtests=$(grep -c -- "--- PASS: TestHKDFVectors/" vectors.log)
+          if [ "$subtests" -ne 3 ]; then
+            echo "::error::expected 3 HKDF sub-tests, saw $subtests"; exit 1
+          fi
+          echo "ok: every published vector was exercised"
+
+  properties:
+    name: security properties actually ran
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      # The same guard for the tests that stand for the project's claims.
+      - name: Run the property tests and require each one by name
+        run: |
+          set -o pipefail
+          go test ./internal/ratchet/ ./internal/client/ ./internal/x3dh/ -v -count=1 \
+            -run 'TestForwardSecrecy|TestPostCompromiseSecurity|TestSkipLimitEnforced|TestSkippedKeyCacheIsBounded|TestReplayedEnvelopeIsRejected|TestReplayedFirstMessageIsRejected|TestTamperedCiphertextIsReportedAndTheSessionSurvives|TestRelaySeesNoPlaintext|TestSubstitutedBundleReadsTheConversationButChangesTheSafetyNumber|TestOutOfOrderDeliveryThroughTheRelay|TestOneTimePreKeyIsConsumedOnce|TestInitiateRefusesUnsignedBundle' \
+            | tee properties.log
+          for name in \
+            TestForwardSecrecy \
+            TestPostCompromiseSecurity \
+            TestSkipLimitEnforced \
+            TestSkippedKeyCacheIsBounded \
+            TestReplayedEnvelopeIsRejected \
+            TestReplayedFirstMessageIsRejected \
+            TestTamperedCiphertextIsReportedAndTheSessionSurvives \
+            TestRelaySeesNoPlaintext \
+            TestSubstitutedBundleReadsTheConversationButChangesTheSafetyNumber \
+            TestOutOfOrderDeliveryThroughTheRelay \
+            TestOneTimePreKeyIsConsumedOnce \
+            TestInitiateRefusesUnsignedBundle
+          do
+            grep -q -- "--- PASS: $name " properties.log \
+              || { echo "::error::$name did not run"; exit 1; }
+          done
+          echo "ok: every advertised property was exercised"
+
+  demo:
+    name: the entrypoint runs a whole conversation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      # The demo asserts its own invariants and exits non-zero if any fail, so
+      # this checks the binary end to end rather than only that it starts.
+      - name: e2ee-chat demo
+        run: |
+          set -o pipefail
+          go run ./cmd/e2ee-chat demo | tee demo.log
+          for marker in \
+            "session established" \
+            "the duplicate was refused" \
+            "the session is unharmed" \
+            "bytes of ciphertext" \
+            "asserted, not just claimed"
+          do
+            grep -qF -- "$marker" demo.log \
+              || { echo "::error::demo output is missing: $marker"; exit 1; }
+          done
+          for secret in eagle midnight "hello bob" out-of-order; do
+            if grep -qiF -- "$secret" <(sed -n '/everything the relay is holding/,$p' demo.log); then
+              echo "::error::plaintext '$secret' printed in the relay's state"; exit 1
+            fi
+          done
+          echo "ok: the demo ran and the relay held no plaintext"
+
+      - name: the relay serves and shuts down cleanly
+        run: |
+          go build -o /tmp/e2ee-chat ./cmd/e2ee-chat
+          /tmp/e2ee-chat serve -addr 127.0.0.1:18080 &
+          pid=$!
+          for i in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:18080/healthz >/dev/null && break
+            sleep 0.2
+          done
+          curl -fsS http://127.0.0.1:18080/healthz | grep -q '"status":"ok"'
+          # A relay with no bundles knows nobody.
+          curl -fsS http://127.0.0.1:18080/v1/users | grep -q '"users":\[\]'
+          kill -TERM $pid
+          wait $pid || true
+          echo "ok: relay serves and shuts down on SIGTERM"
+
+  docker:
+    name: image builds and runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: e2ee-chat:ci
+      - run: docker run --rm e2ee-chat:ci version
+      - name: the demo runs inside the image
+        run: docker run --rm e2ee-chat:ci demo | tail -20
+
+  tidy:
+    name: go.mod is tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - run: go mod tidy
+      - run: git diff --exit-code go.mod go.sum
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...

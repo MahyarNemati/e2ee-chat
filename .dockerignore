@@ -1,0 +1,8 @@
+.git
+.github
+*.md
+!README.md
+bin
+dist
+*.keys
+.DS_Store
