@@ -111,7 +111,7 @@ is never given a plaintext to hold.
 
 ## Quickstart
 
-Go 1.24 or newer. No cgo, no database, no external services.
+Go 1.25 or newer. No cgo, no database, no external services.
 
 ```bash
 go build -o bin/e2ee-chat ./cmd/e2ee-chat
