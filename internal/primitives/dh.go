@@ -9,6 +9,7 @@ package primitives
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -89,4 +90,36 @@ func DH(priv PrivateKey, pub PublicKey) (SharedSecret, error) {
 func (p PublicKey) IsZero() bool {
 	var zero PublicKey
 	return ConstantTimeEqual(p[:], zero[:])
+}
+
+// MarshalText and UnmarshalText give keys a readable JSON form. Only public
+// keys ever cross the wire; the private half is marshalled solely by the
+// keystore, which immediately encrypts the result.
+func (p PublicKey) MarshalText() ([]byte, error) { return encodeKey(p[:]), nil }
+
+// UnmarshalText decodes a base64 public key.
+func (p *PublicKey) UnmarshalText(text []byte) error { return decodeKey(p[:], text) }
+
+// MarshalText encodes a private key as base64.
+func (p PrivateKey) MarshalText() ([]byte, error) { return encodeKey(p[:]), nil }
+
+// UnmarshalText decodes a base64 private key.
+func (p *PrivateKey) UnmarshalText(text []byte) error { return decodeKey(p[:], text) }
+
+func encodeKey(b []byte) []byte {
+	out := make([]byte, base64.StdEncoding.EncodedLen(len(b)))
+	base64.StdEncoding.Encode(out, b)
+	return out
+}
+
+func decodeKey(dst []byte, text []byte) error {
+	raw, err := base64.StdEncoding.AppendDecode(nil, text)
+	if err != nil {
+		return fmt.Errorf("primitives: decode key: %w", err)
+	}
+	if len(raw) != len(dst) {
+		return fmt.Errorf("primitives: key is %d bytes, want %d", len(raw), len(dst))
+	}
+	copy(dst, raw)
+	return nil
 }
