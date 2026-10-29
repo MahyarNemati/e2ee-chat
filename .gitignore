@@ -1,0 +1,16 @@
+# Build output. Every entry is anchored with a leading slash so that a binary
+# name can never also match the cmd/<name>/ source directory.
+/bin/
+/dist/
+/e2ee-chat
+
+# Test and coverage artefacts
+/coverage.out
+/coverage.html
+
+# Local key material and relay state -- never commit these
+*.keys
+*.keystore
+/relay-state.json
+
+.DS_Store
