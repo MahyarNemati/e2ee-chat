@@ -23,7 +23,7 @@ jobs:
         go: ['1.25', '1.26']
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
           cache: true
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
@@ -120,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
@@ -185,7 +185,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
@@ -200,7 +200,7 @@ jobs:
       # govulncheck itself tracks the current Go release and refuses to build on
       # an older toolchain, so this job uses the latest Go rather than the
       # module's minimum. It still analyses the module as declared.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: 'stable'
           cache: true
